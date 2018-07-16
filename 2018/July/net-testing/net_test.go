@@ -7,33 +7,59 @@ import (
 	"testing"
 )
 
-var srv Server
+var tcp, udp Server
 
 func init() {
 	// Start the new server
-	srv, err := NewServer("tcp", ":1123")
+	tcp, err := NewServer("tcp", ":1123")
 	if err != nil {
 		log.Println("error starting TCP server")
 		return
 	}
 
-	// Run the server in goroutine to stop blocking
+	udp, err := NewServer("udp", ":6250")
+	if err != nil {
+		log.Println("error starting UDP server")
+		return
+	}
+
+	// Run the servers in goroutines to stop blocking
 	go func() {
-		srv.Run()
+		tcp.Run()
+	}()
+	go func() {
+		udp.Run()
 	}()
 }
 
 func TestNETServer_Running(t *testing.T) {
 	// Simply check that the server is up and can
 	// accept connections.
-	conn, err := net.Dial("tcp", ":1123")
-	if err != nil {
-		t.Error("could not connect to server: ", err)
+	servers := []struct {
+		protocol string
+		addr     string
+	}{
+		{"tcp", ":1123"},
+		{"udp", ":6250"},
 	}
-	defer conn.Close()
+	for _, serv := range servers {
+		conn, err := net.Dial(serv.protocol, serv.addr)
+		if err != nil {
+			t.Error("could not connect to server: ", err)
+		}
+		defer conn.Close()
+	}
 }
 
 func TestNETServer_Request(t *testing.T) {
+	servers := []struct {
+		protocol string
+		addr     string
+	}{
+		{"tcp", ":1123"},
+		{"udp", ":6250"},
+	}
+
 	tt := []struct {
 		test    string
 		payload []byte
@@ -43,26 +69,28 @@ func TestNETServer_Request(t *testing.T) {
 		{"Sending another simple request works", []byte("goodbye world\n"), []byte("Request received: goodbye world")},
 	}
 
-	for _, tc := range tt {
-		t.Run(tc.test, func(t *testing.T) {
-			conn, err := net.Dial("tcp", ":1123")
-			if err != nil {
-				t.Error("could not connect to TCP server: ", err)
-			}
-			defer conn.Close()
-
-			if _, err := conn.Write(tc.payload); err != nil {
-				t.Error("could not write payload to TCP server:", err)
-			}
-
-			out := make([]byte, 1024)
-			if _, err := conn.Read(out); err == nil {
-				if bytes.Compare(out, tc.want) == 0 {
-					t.Error("response did match expected output")
+	for _, serv := range servers {
+		for _, tc := range tt {
+			t.Run(tc.test, func(t *testing.T) {
+				conn, err := net.Dial(serv.protocol, serv.addr)
+				if err != nil {
+					t.Error("could not connect to server: ", err)
 				}
-			} else {
-				t.Error("could not read from connection")
-			}
-		})
+				defer conn.Close()
+
+				if _, err := conn.Write(tc.payload); err != nil {
+					t.Error("could not write payload to server:", err)
+				}
+
+				out := make([]byte, 1024)
+				if _, err := conn.Read(out); err == nil {
+					if bytes.Compare(out, tc.want) == 0 {
+						t.Error("response did match expected output")
+					}
+				} else {
+					t.Error("could not read from connection")
+				}
+			})
+		}
 	}
 }
